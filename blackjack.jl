@@ -7,32 +7,31 @@ using POMDPSimulators: RolloutSimulator
 
 
 bj = QuickMDP(
+    num_card_prob = 1/13,
+    ace_card_prob = 1/13,
+    face_or_10_prob = 4/13,
 
-    num_card_prob = 1/13
-    ace_card_prob = 1/13
-    face_or_10_prob = 4/13
-
-    player_idx = 1
-    dealer_idx = 2
+    player_idx = 1,
+    dealer_idx = 2,
 
     player_hands = [:5, :6, :7, :8, :9, :10, :11, :12, :13, :14, :15, :16, :17, :18, :19, :20, :21,
                 :soft13, :soft14, :soft15, :soft16, :soft17, :soft18, :soft19, :soft20, 
-                :pair2, :pair3, :pair4, :pair5, :pair6, :pair7, :pair8, :pair9, :pair10, pairAA
-                :bust]
+                :pair2, :pair3, :pair4, :pair5, :pair6, :pair7, :pair8, :pair9, :pair10, :pairAA,
+                :bust],
 
     dealer_hands = [:A, :2, :3, :4, :5, :6, :7, :8, :9, :10, :11, :12, :13, :14, :15, :16, :17, :18, :19, :20, :21, 
                 :soft13, :soft14, :soft15, :soft16, :soft17, :soft18, :soft19, :soft20, 
-                :pair2, :pair3, :pair4, :pair5, :pair6, :pair7, :pair8, :pair9, :pair10, pairAA
-                :bust]
+                :pair2, :pair3, :pair4, :pair5, :pair6, :pair7, :pair8, :pair9, :pair10, :pairAA,
+                :bust],
 
-    player_states = [:playing, :staying, :win, :push, :lost]
+    player_states = [:playing, :staying, :win, :push, :lost],
 
-    states = function (m:QuickMDP)
+    states = function (m::QuickMDP)
         s_list = []
         for sp in m.player_states
             for sd in m.dealer_states
                 for ps in m.player_states
-                    push!(s_list, [(sp, ps), (sd, ps)
+                    push!(s_list, [(sp, ps), (sd, ps)])
                 end
             end 
         end
@@ -254,7 +253,7 @@ bj = QuickMDP(
         else 
             return false
         end
-    end
+    end,
 )
 
 policy = FunctionPolicy(a->POMDPs.actions(bj)[1]) # always hit policy 
