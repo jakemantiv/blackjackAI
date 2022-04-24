@@ -27,6 +27,46 @@ get_initial_state = function()
     return (player_total, dealer_draw, useable_ace)
 end
 
+function my_expert_policy(s)
+    player_total_in = s[total_idx]
+    dealer_showing_in = s[dealer_showing_idx]
+    useable_ace_in = s[useable_ace_idx]
+
+    if useable_ace_in == false 
+        if player_total_in <= 11
+            action_out = :hit
+        elseif player_total_in == 12
+            if dealer_showing_in in [2,3,7,8,9,10,:ace]
+                action_out = :hit
+            else 
+                action_out = :stay
+            end
+        elseif player_total_in in [13, 14, 15, 16]
+            if dealer_showing_in in [7,8,9,10,:ace]
+                action_out = :hit
+            else 
+                action_out = :stay
+            end
+        elseif player_total_in >= 17
+            action_out = :stay
+        end
+    else #useable_ace_in == true
+        if player_total_in <= 17
+            action_out = :hit
+        elseif player_total_in == 18
+            if dealer_showing_in in [9,10,:ace]
+
+            else 
+                action_out = :stay
+    
+            end
+        elseif player_total_in >= 19
+            action_out = :stay
+        end
+    end
+    return action_out
+end
+
 bj = QuickMDP(
     actions = [:hit,:stay], # could add double down or surrender
     function(s, a, rng)
@@ -49,7 +89,14 @@ bj = QuickMDP(
         elseif a == :stay
             # no change in player count, dealer follows a set strategy
             dealer_turn_over = false
-            first_ace = s[dealer_showing_idx] != :ace # was the dealer already showing an ace?
+            first_ace = dealer_showing_in != :ace # was the dealer already showing an ace?
+
+            if dealer_showing_in == :ace
+            dealer_total = 11
+            else
+                dealer_total = dealer_showing_in
+            end
+
             while !dealer_turn_over
                 new_dealer_card = rand(cards)
                 if new_dealer_card == :ace
@@ -60,6 +107,8 @@ bj = QuickMDP(
                         dealer_total += 1  
                     end
                     first_ace = false
+                else
+                    dealer_total += new_dealer_card 
                 end
                 if dealer_total >= 17
                     dealer_turn_over = true
@@ -107,7 +156,7 @@ bj = QuickMDP(
     # end,
 
     # initialstate = get_initial_state(), # intial draw from the deck
-    initialstate = Deterministic((2,5,true)), # intial draw from the deck - test
+    initialstate = Deterministic((5,5,false)), # intial draw from the deck - test
 
     discount = 1.0, # not a discounted game
     isterminal = function(s)
@@ -119,7 +168,7 @@ bj = QuickMDP(
     end
 )
 
-policy = FunctionPolicy(a->POMDPs.actions(bj)[1]) # evaluate always hit policy
+policy = FunctionPolicy(my_expert_policy) # evaluate always hit policy
 sim = RolloutSimulator(max_steps=100)
 @show reward_ = [POMDPs.simulate(sim, bj, policy) for _ in 1:100]
 @show mean(reward_)
