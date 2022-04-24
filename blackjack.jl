@@ -55,7 +55,7 @@ function my_expert_policy(s)
             action_out = :hit
         elseif player_total_in == 18
             if dealer_showing_in in [9,10,:ace]
-
+                action_out = :hit
             else 
                 action_out = :stay
     
@@ -70,7 +70,6 @@ end
 bj = QuickMDP(
     actions = [:hit,:stay], # could add double down or surrender
     function(s, a, rng)
-        println(s)
         player_total_in = s[total_idx]
         dealer_showing_in = s[dealer_showing_idx]
         useable_ace_in = s[useable_ace_idx]
@@ -92,7 +91,7 @@ bj = QuickMDP(
             first_ace = dealer_showing_in != :ace # was the dealer already showing an ace?
 
             if dealer_showing_in == :ace
-            dealer_total = 11
+                dealer_total = 11
             else
                 dealer_total = dealer_showing_in
             end
@@ -115,9 +114,11 @@ bj = QuickMDP(
                 end
             end
 
-            if dealer_total == s[total_idx]
+            if dealer_total == player_total_in
                 r_out = 0.0 # a tie!
-            elseif dealer_total > s[total_idx]
+            elseif dealer_total > 21 
+                r_out = 1.0 # dealer busts, a win!
+            elseif dealer_total > player_total_in
                 r_out = -1.0 # a loss!
             else # dealer_total < s[total_idx]
                 r_out = 1.0 # a win!
@@ -151,13 +152,9 @@ bj = QuickMDP(
         return (sp=sp_out, r=r_out)
     end,
 
-    # observation = function (s, a, sp)
-    #     return s # not a pomdp, the exact state is known
-    # end,
-
     # initialstate = get_initial_state(), # intial draw from the deck
     initialstate = Deterministic((5,5,false)), # intial draw from the deck - test
-
+    # initialstate = Uniform(([2,3,4,5,6,7,8,9,10], [2,3,4,5,], [true,false])),
     discount = 1.0, # not a discounted game
     isterminal = function(s)
         if s[1] == -1 # -1 is our terminal state
@@ -167,8 +164,8 @@ bj = QuickMDP(
         end
     end
 )
-
-policy = FunctionPolicy(my_expert_policy) # evaluate always hit policy
+# policy = FunctionPolicy(a->actions(bj)[1]) # evaluate always hit policy
+policy = FunctionPolicy(my_expert_policy) # evaluate 'expert' policy 
 sim = RolloutSimulator(max_steps=100)
-@show reward_ = [POMDPs.simulate(sim, bj, policy) for _ in 1:100]
+@show reward_ = [POMDPs.simulate(sim, bj, policy) for _ in 1:1000]
 @show mean(reward_)
