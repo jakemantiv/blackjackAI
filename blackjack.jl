@@ -1,262 +1,237 @@
 using QuickPOMDPs: QuickMDP
 using POMDPs
-using POMDPModelTools: Deterministic, Uniform, SparseCat
+using POMDPModelTools: Deterministic, Uniform, SparseCat, ImplicitDistribution
+
 using POMDPPolicies: FunctionPolicy
 using POMDPSimulators: RolloutSimulator
 
 
+# helper functions
+cards = [:ace, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10] # 4 10s for the face cards + 10
+# state[1] = players hand
+total_idx = 1
+# state[2] = dealer showing
+dealer_showing_idx = 2
+# state[3] = useable ace?
+useable_ace_idx = 3
+
+get_initial_state = function()
+    player_draw = rand(cards)
+    dealer_draw = rand(cards)
+    if player_draw == :ace
+        player_total = 11
+        useable_ace = true
+    else 
+        player_total = player_draw
+        useable_ace = false
+    end
+    return (player_total, dealer_draw, useable_ace)
+end
+
+function my_expert_policy(s)
+    #  https://wizardofodds.com/games/blackjack/strategy/4-decks/
+    player_total_in = s[total_idx]
+    dealer_showing_in = s[dealer_showing_idx]
+    useable_ace_in = s[useable_ace_idx]
+
+    if useable_ace_in == false 
+        if player_total_in <= 11
+            action_out = :hit
+        elseif player_total_in == 12
+            if dealer_showing_in in [2,3,7,8,9,10,:ace]
+                action_out = :hit
+            else 
+                action_out = :stay
+            end
+        elseif player_total_in in [13, 14, 15, 16]
+            if dealer_showing_in in [7,8,9,10,:ace]
+                action_out = :hit
+            else 
+                action_out = :stay
+            end
+        elseif player_total_in >= 17
+            action_out = :stay
+        end
+    else #useable_ace_in == true
+        if player_total_in <= 17
+            action_out = :hit
+        elseif player_total_in == 18
+            if dealer_showing_in in [9,10,:ace]
+                action_out = :hit
+            else 
+                action_out = :stay
+    
+            end
+        elseif player_total_in >= 19
+            action_out = :stay
+        end
+    end
+    return action_out
+end
+
+function simulate_dealer(dealer_showing_in)
+    dealer_turn_over = false
+    dealer_useable_ace = dealer_showing_in == :ace # was the dealer already showing an ace?
+    dealer_blackjack = false
+    num_turns = 1
+
+    if dealer_showing_in == :ace
+        dealer_total = 11
+    else
+        dealer_total = dealer_showing_in
+    end
+
+    while !dealer_turn_over
+        num_turns +=1 # keep count of draws for natural blackjack
+        new_dealer_card = rand(cards) # draw a new card
+        if new_dealer_card == :ace 
+            if num_turns == 2 && (dealer_total + 11) == 21
+                dealer_blackjack = true 
+                dealer_total += 11 # natural blackjack
+            elseif dealer_useable_ace == true && (dealer_total + 11) > 21
+                dealer_total += 1 + 1 -11
+                dealer_useable_ace = false 
+            elseif dealer_useable_ace == true && (dealer_total + 11) <= 21
+                dealer_total += 11
+                dealer_useable_ace = true 
+            elseif dealer_useable_ace == false && (dealer_total + 11) <= 21
+                dealer_total += 11
+                dealer_useable_ace = true 
+            elseif dealer_useable_ace == false && (dealer_total + 11) > 21 
+                dealer_total += 1
+            else
+                println(dealer_showing_in) 
+            end
+
+        else
+            if num_turns == 2 && (dealer_total + new_dealer_card) == 21
+                dealer_blackjack = true 
+                dealer_total += new_dealer_card # natural blackjack
+            elseif dealer_useable_ace == true && (dealer_total + new_dealer_card) > 21
+                dealer_total += new_dealer_card - 11 + 1
+                dealer_useable_ace = false 
+            else
+                dealer_total += new_dealer_card 
+            end
+        end
+        if dealer_total >= 17 || dealer_blackjack # stand on soft 17
+            dealer_turn_over = true
+        end
+    end
+
+    return (dealer_blackjack, dealer_total)
+end
 
 bj = QuickMDP(
-    num_card_prob = 1/13,
-    ace_card_prob = 1/13,
-    face_or_10_prob = 4/13,
+    actions = [:hit,:stay], # could add double down or surrender or split 
+    states = [(p_count,d_show,use_ace) for p_count in -1:31 for d_show in cards for use_ace in [true, false]],
+    function(s, a, rng)
+        player_total_in = s[total_idx]
+        dealer_showing_in = s[dealer_showing_idx]
+        useable_ace_in = s[useable_ace_idx]
 
-    player_idx = 1,
-    dealer_idx = 2,
+        player_total_out = -1
+        dealer_showing_out = -1
+        useable_ace_out = false
 
-    player_hands = [:5, :6, :7, :8, :9, :10, :11, :12, :13, :14, :15, :16, :17, :18, :19, :20, :21,
-                :soft13, :soft14, :soft15, :soft16, :soft17, :soft18, :soft19, :soft20, 
-                :pair2, :pair3, :pair4, :pair5, :pair6, :pair7, :pair8, :pair9, :pair10, :pairAA,
-                :bust],
-
-    dealer_hands = [:A, :2, :3, :4, :5, :6, :7, :8, :9, :10, :11, :12, :13, :14, :15, :16, :17, :18, :19, :20, :21, 
-                :soft13, :soft14, :soft15, :soft16, :soft17, :soft18, :soft19, :soft20, 
-                :pair2, :pair3, :pair4, :pair5, :pair6, :pair7, :pair8, :pair9, :pair10, :pairAA,
-                :bust],
-
-    player_states = [:playing, :staying, :win, :push, :lost],
-
-    states = function (m::QuickMDP)
-        s_list = []
-        for sp in m.player_states
-            for sd in m.dealer_states
-                for ps in m.player_states
-                    push!(s_list, [(sp, ps), (sd, ps)])
-                end
-            end 
-        end
-
-        return s_list
-    end,
-
-
-    actions = function (s) # could add double down or surrender
-        if s[1][2] == :playing   # Can only use :hit while :playing
-            return [:hit,:stay]
-        elseif s[1][2] == :staying && s[2][2] == :playing
-            return [:dealer_hit, :dealer_stay]
-        else
-            # should only happen when dealer stays
-            return [:dealer_stay]
-            
-        end
-            
-    end, 
-
-    transition = function (s, a)
-
-        sp = 0  # init to error condition, if-else statements should correctly set
-
-        if s[player_idx][2] == :bust    # player busts, always transition to :lost, transition to terminal states
-            sp = Deterministic((s[player_idx][1], :lost), (s[dealer_idx][1], :won))
-
-        elseif s[player_idx][2] == :staying && s[dealer_idx][2] == :busts   # player stays and dealer busts, transition to terminal states
-            sp = Deterministic((s[player_idx][1], :won), (s[dealer_idx][1], :lost))
-            
-        
-        elseif s[dealer_idx][2] == :staying && s[player_idx][2] == :staying     # both player and dealer stay... need to resolve higher hand, transition to terminal states
-            # TODO need to convert hands to integers
-            if s[player_idx][1] > s[dealer_idx][2]
-                sp = Deterministic((s[dealer_idx][1], :won),(s[dealer_idx][1], :lost))
-            elseif s[player_idx][1] == s[dealer_idx][2]
-                sp = Deterministic((s[dealer_idx][1], :push),(s[dealer_idx][1], :push))
+        r_out = 0.0
+        if s[total_idx] > 21 # went over 21, player automatically loses
+            r_out = -1.0
+            sp_out = (player_total_out, dealer_showing_out, useable_ace_out)
+        elseif s[total_idx] == 21 # player hit 21, player automatically wins unless dealer blackjacks? 
+            dealer_blackjack, dealer_total = simulate_dealer(dealer_showing_in)
+            if dealer_blackjack
+                r_out = 0.0
             else
-                sp = Deterministic((s[dealer_idx][1], :lost),(s[dealer_idx][1], :won))
+                r_out = 1.0
             end
-             
-        elseif a == :hit && s[player_idx][2] == :playing        # player hit
-            if s[player_idx] == :5
-                sp = SparseCat([((:soft16, :playing), s[dealer_idx]), ((:7, :playing), s[dealer_idx]), ((:8, :playing), s[dealer_idx]), ((:9, :playing), s[dealer_idx]), ((:10, :playing), s[dealer_idx]), ((:11, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx])] , [ace_card_prob, num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :6 
-                sp = SparseCat([((:soft17, :playing), s[dealer_idx]), ((:8, :playing), s[dealer_idx]), ((:9, :playing), s[dealer_idx]), ((:10, :playing), s[dealer_idx]), ((:11, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx])] , [ace_card_prob, num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :7
-                sp = SparseCat([((:soft18, :playing), s[dealer_idx]), ((:9, :playing), s[dealer_idx]), ((:10, :playing), s[dealer_idx]), ((:11, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx])] , [ace_card_prob, num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :8
-                sp = SparseCat([((:soft19, :playing), s[dealer_idx]), ((:10, :playing), s[dealer_idx]), ((:11, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx])] , [ace_card_prob, num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :9
-                sp = SparseCat([((:soft20, :playing), s[dealer_idx]), ((:11, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx]), ((:19, :playing), s[dealer_idx])] , [ace_card_prob, num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :10
-                sp = SparseCat([((:21, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx]), ((:19, :playing), s[dealer_idx]), ((:20, :playing), s[dealer_idx])] , [ace_card_prob, num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :11
-                sp = SparseCat([((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx]), ((:19, :playing), s[dealer_idx]), ((:20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :12
-                sp = SparseCat([((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx]), ((:19, :playing), s[dealer_idx]), ((:20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:bust, :lost), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :13
-                sp = SparseCat([((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx]), ((:19, :playing), s[dealer_idx]), ((:20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:bust, :lost), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+1*num_card_prob)])
-            elseif s[player_idx] == :14
-                sp = SparseCat([((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx]), ((:19, :playing), s[dealer_idx]), ((:20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:bust, :lost), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+2*num_card_prob)])
-            elseif s[player_idx] == :15
-                sp = SparseCat([((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx]), ((:19, :playing), s[dealer_idx]), ((:20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:bust, :lost), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+3*num_card_prob)])
-            elseif s[player_idx] == :16
-                sp = SparseCat([((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx]), ((:19, :playing), s[dealer_idx]), ((:20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:bust, :lost), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+4*num_card_prob)])
-            elseif s[player_idx] == :17
-                sp = SparseCat([((:18, :playing), s[dealer_idx]), ((:19, :playing), s[dealer_idx]), ((:20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:bust, :lost), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+5*num_card_prob)])
-            elseif s[player_idx] == :18
-                sp = SparseCat([((:19, :playing), s[dealer_idx]), ((:20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:bust, :lost), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+6*num_card_prob)])
-            elseif s[player_idx] == :19
-                sp = SparseCat([((:20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:bust, :lost), s[dealer_idx])] , [ace_card_prob,num_card_prob,(face_or_10_prob+7*num_card_prob)])
-            elseif s[player_idx] == :20
-                sp = SparseCat([((:21, :playing), s[dealer_idx]), ((:bust, :lost), s[dealer_idx])] , [ace_card_prob,(face_or_10_prob+8*num_card_prob)])
-            elseif s[player_idx] == :21
-                sp = Deterministic(((:bust, :lost), s[dealer_idx]))
-            elseif s[player_idx] == :soft13
-                sp = SparseCat([((:soft14, :playing), s[dealer_idx]), ((:soft15, :playing), s[dealer_idx]), ((:soft16, :playing), s[dealer_idx]), ((:soft17, :playing), s[dealer_idx]), ((:soft18, :playing), s[dealer_idx]), ((:soft19, :playing), s[dealer_idx]), ((:soft20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :soft14
-                sp = SparseCat([((:soft15, :playing), s[dealer_idx]), ((:soft16, :playing), s[dealer_idx]), ((:soft17, :playing), s[dealer_idx]), ((:soft18, :playing), s[dealer_idx]), ((:soft19, :playing), s[dealer_idx]), ((:soft20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :soft15
-                sp = SparseCat([((:soft16, :playing), s[dealer_idx]), ((:soft17, :playing), s[dealer_idx]), ((:soft18, :playing), s[dealer_idx]), ((:soft19, :playing), s[dealer_idx]), ((:soft20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :soft16
-                sp = SparseCat([((:soft17, :playing), s[dealer_idx]), ((:soft18, :playing), s[dealer_idx]), ((:soft19, :playing), s[dealer_idx]), ((:soft20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :soft17
-                sp = SparseCat([((:soft18, :playing), s[dealer_idx]), ((:soft19, :playing), s[dealer_idx]), ((:soft20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :soft18
-                sp = SparseCat([((:soft19, :playing), s[dealer_idx]), ((:soft20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :soft19
-                sp = SparseCat([:soft20, ((:21, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx]), ((:19, :playing), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :soft20
-                sp = SparseCat([((:21, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx]), ((:19, :playing), s[dealer_idx]), ((:20, :playing), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :pairAA
-                sp = SparseCat([((:soft13, :playing), s[dealer_idx]), ((:soft14, :playing), s[dealer_idx]), ((:soft15, :playing), s[dealer_idx]), ((:soft16, :playing), s[dealer_idx]), ((:soft17, :playing), s[dealer_idx]), ((:soft18, :playing), s[dealer_idx]), ((:soft19, :playing), s[dealer_idx]), ((:soft20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])                
-            elseif s[player_idx] == :pair2
-                sp = SparseCat([((:soft15, :playing), s[dealer_idx]), :6, ((:7, :playing), s[dealer_idx]), ((:8, :playing), s[dealer_idx]), ((:9, :playing), s[dealer_idx]), ((:10, :playing), s[dealer_idx]), ((:11, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :pair3
-                sp = SparseCat([((:soft17, :playing), s[dealer_idx]), ((:8, :playing), s[dealer_idx]), ((:9, :playing), s[dealer_idx]), ((:10, :playing), s[dealer_idx]), ((:11, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :pair4
-                sp = SparseCat([((:soft19, :playing), s[dealer_idx]), ((:10, :playing), s[dealer_idx]), ((:11, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :pair5
-                sp = SparseCat([((:21, :playing), s[dealer_idx]), ((:12, :playing), s[dealer_idx]), ((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx]), ((:19, :playing), s[dealer_idx]), ((:20, :playing), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :pair6
-                sp = SparseCat([((:13, :playing), s[dealer_idx]), ((:14, :playing), s[dealer_idx]), ((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx]), ((:19, :playing), s[dealer_idx]), ((:20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:bust, :lost), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[player_idx] == :pair7
-                sp = SparseCat([((:15, :playing), s[dealer_idx]), ((:16, :playing), s[dealer_idx]), ((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx]), ((:19, :playing), s[dealer_idx]), ((:20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:bust, :lost), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+2*num_card_prob)])
-            elseif s[player_idx] == :pair8
-                sp = SparseCat([((:17, :playing), s[dealer_idx]), ((:18, :playing), s[dealer_idx]), ((:19, :playing), s[dealer_idx]), ((:20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:bust, :lost), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+4*num_card_prob)])
-            elseif s[player_idx] == :pair9
-                sp = SparseCat([((:19, :playing), s[dealer_idx]), ((:20, :playing), s[dealer_idx]), ((:21, :playing), s[dealer_idx]), ((:bust, :lost), s[dealer_idx])] , [ace_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+6*num_card_prob)])
-            elseif s[player_idx] == :pair10
-                sp = SparseCat([((:21, :playing), s[dealer_idx]), ((:bust, :lost), s[dealer_idx])] , [ace_card_prob,(face_or_10_prob+8*num_card_prob)])
-            end
-                
-        elseif a == :stay && s[dealer_idx][2] == :playing   # player stay
-            sp = Deterministic((s[player_idx][1], :staying), s[dealer_idx])
+            sp_out = (player_total_out, dealer_showing_out, useable_ace_out)
+        elseif a == :stay
+            # no change in player count, dealer follows a set strategy
+            dealer_blackjack, dealer_total = simulate_dealer(dealer_showing_in)
 
-        elseif a == :dealer_hit && s[dealer_idx][2] == :playing && s[player_idx][2] == :staying     # player stays, dealer hits
-            
-            if s[dealer_idx] == :5
-                sp = SparseCat([(s[1], (:7, :playing)), (s[1], (:8, :playing)), (s[1], (:9, :playing)), (s[1], (:10, :playing)), (s[1], (:11, :playing)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:soft16, :playing))] , [ace_card_prob, num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :6 
-                sp = SparseCat([(s[1], (:8, :playing)), (s[1], (:9, :playing)), (s[1], (:10, :playing)), (s[1], (:11, :playing)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:soft17, :staying))] , [ace_card_prob, num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :7
-                sp = SparseCat([(s[1], (:9, :playing)), (s[1], (:10, :playing)), (s[1], (:11, :playing)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:soft18, :staying))] , [ace_card_prob, num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :8
-                sp = SparseCat([(s[1], (:10, :playing)), (s[1], (:11, :playing)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:18, :playing)), (s[1], (:soft19, :staying))] , [ace_card_prob, num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :9
-                sp = SparseCat([(s[1], (:11, :playing)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:18, :playing)), (s[1], (:19, :playing)), (s[1], (:soft20, :staying))] , [ace_card_prob, num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :10
-                sp = SparseCat([(s[1], (:21, :staying)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:18, :playing)), (s[1], (:19, :playing)), (s[1], (:20, :playing))] , [ace_card_prob, num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :11
-                sp = SparseCat([(s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:18, :playing)), (s[1], (:19, :playing)), (s[1], (:20, :playing)), (s[1], (:21, :staying))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :12
-                sp = SparseCat([(s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:18, :playing)), (s[1], (:19, :playing)), (s[1], (:20, :playing)), (s[1], (:21, :staying)), (s[1], (:bust, :lost))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :13
-                sp = SparseCat([(s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:18, :playing)), (s[1], (:19, :playing)), (s[1], (:20, :playing)), (s[1], (:21, :staying)), (s[1], (:bust, :lost))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+1*num_card_prob)])
-            elseif s[dealer_idx] == :14
-                sp = SparseCat([(s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:18, :playing)), (s[1], (:19, :playing)), (s[1], (:20, :playing)), (s[1], (:21, :staying)), (s[1], (:bust, :lost))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+2*num_card_prob)])
-            elseif s[dealer_idx] == :15
-                sp = SparseCat([(s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:18, :playing)), (s[1], (:19, :playing)), (s[1], (:20, :playing)), (s[1], (:21, :staying)), (s[1], (:bust, :lost))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+3*num_card_prob)])
-            elseif s[dealer_idx] == :16
-                sp = SparseCat([(s[1], (:17, :playing)), (s[1], (:18, :playing)), (s[1], (:19, :playing)), (s[1], (:20, :playing)), (s[1], (:21, :staying)), (s[1], (:bust, :lost))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+4*num_card_prob)])
-            elseif s[dealer_idx] == :17
-                sp = SparseCat([(s[1], (:18, :playing)), (s[1], (:19, :playing)), (s[1], (:20, :playing)), (s[1], (:21, :staying)), (s[1], (:bust, :lost))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+5*num_card_prob)])
-            elseif s[dealer_idx] == :18
-                sp = SparseCat([(s[1], (:19, :playing)), (s[1], (:20, :playing)), (s[1], (:21, :staying)), (s[1], (:bust, :lost))] , [ace_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+6*num_card_prob)])
-            elseif s[dealer_idx] == :19
-                sp = SparseCat([(s[1], (:20, :playing)), (s[1], (:21, :staying)), (s[1], (:bust, :lost))] , [ace_card_prob,num_card_prob,(face_or_10_prob+7*num_card_prob)])
-            elseif s[dealer_idx] == :20
-                sp = SparseCat([(s[1], (:21, :staying)), (s[1], (:bust, :lost))] , [ace_card_prob,(face_or_10_prob+8*num_card_prob)])
-            elseif s[dealer_idx] == :soft13
-                sp = SparseCat([(s[1], (:soft14, :playing)), (s[1], (:soft15, :playing)), (s[1], (:soft16, :playing)), (s[1], (:soft17, :staying)), (s[1], (:soft18, :staying)), (s[1], (:soft19, :staying)), (s[1], (:soft20, :staying)), (s[1], (:21, :staying)), (s[1], (:12, :playing)), (s[1], (:13, :playing))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :soft14
-                sp = SparseCat([(s[1], (:soft15, :playing)), (s[1], (:soft16, :playing)), (s[1], (:soft17, :staying)), (s[1], (:soft18, :staying)), (s[1], (:soft19, :staying)), (s[1], (:soft20, :staying)), (s[1], (:21, :staying)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :soft15
-                sp = SparseCat([(s[1], (:soft16, :playing)), (s[1], (:soft17, :staying)), (s[1], (:soft18, :staying)), (s[1], (:soft19, :staying)), (s[1], (:soft20, :staying)), (s[1], (:21, :staying)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :soft16
-                sp = SparseCat([(s[1], (:soft17, :staying)), (s[1], (:soft18, :staying)), (s[1], (:soft19, :staying)), (s[1], (:soft20, :staying)), (s[1], (:21, :staying)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :soft17
-                sp = SparseCat([(s[1], (:soft18, :staying)), (s[1], (:soft19, :staying)), (s[1], (:soft20, :staying)), (s[1], (:21, :staying)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :soft18
-                sp = SparseCat([(s[1], (:soft19, :staying)), (s[1], (:soft20, :staying)), (s[1], (:21, :staying)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:18, :playing))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :soft19
-                sp = SparseCat([:soft20, (s[1], (:21, :staying)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:18, :playing)), (s[1], (:19, :playing))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :soft20
-                sp = SparseCat([(s[1], (:21, :staying)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:18, :playing)), (s[1], (:19, :playing)), (s[1], (:20, :playing))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :pairAA
-                sp = SparseCat([(s[1], (:soft13, :playing)), (s[1], (:soft14, :playing)), (s[1], (:soft15, :playing)), (s[1], (:soft16, :playing)), (s[1], (:soft17, :staying)), (s[1], (:soft18, :staying)), (s[1], (:soft19, :staying)), (s[1], (:soft20, :staying)), (s[1], (:21, :staying)), (s[1], (:12, :playing))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])                
-            elseif s[dealer_idx] == :pair2
-                sp = SparseCat([(s[1], (:soft15, :playing)), :6, (s[1], (:7, :playing)), (s[1], (:8, :playing)), (s[1], (:9, :playing)), (s[1], (:10, :playing)), (s[1], (:11, :playing)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :pair3
-                sp = SparseCat([(s[1], (:soft17, :staying)), (s[1], (:8, :playing)), (s[1], (:9, :playing)), (s[1], (:10, :playing)), (s[1], (:11, :playing)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :pair4
-                sp = SparseCat([(s[1], (:soft19, :staying)), (s[1], (:10, :playing)), (s[1], (:11, :playing)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:18, :playing))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :pair5
-                sp = SparseCat([(s[1], (:21, :staying)), (s[1], (:12, :playing)), (s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:18, :playing)), (s[1], (:19, :playing)), (s[1], (:20, :playing))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :pair6
-                sp = SparseCat([(s[1], (:13, :playing)), (s[1], (:14, :playing)), (s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:18, :playing)), (s[1], (:19, :playing)), (s[1], (:20, :playing)), (s[1], (:21, :staying)), (s[1], (:bust, :lost))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,face_or_10_prob])
-            elseif s[dealer_idx] == :pair7
-                sp = SparseCat([(s[1], (:15, :playing)), (s[1], (:16, :playing)), (s[1], (:17, :playing)), (s[1], (:18, :playing)), (s[1], (:19, :playing)), (s[1], (:20, :playing)), (s[1], (:21, :staying)), (s[1], (:bust, :lost))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+2*num_card_prob)])
-            elseif s[dealer_idx] == :pair8
-                sp = SparseCat([(s[1], (:17, :playing)), (s[1], (:18, :playing)), (s[1], (:19, :playing)), (s[1], (:20, :playing)), (s[1], (:21, :staying)), (s[1], (:bust, :lost))] , [ace_card_prob,num_card_prob,num_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+4*num_card_prob)])
-            elseif s[dealer_idx] == :pair9
-                sp = SparseCat([(s[1], (:19, :playing)), (s[1], (:20, :playing)), (s[1], (:21, :staying)), (s[1], (:bust, :lost))] , [ace_card_prob,num_card_prob,num_card_prob,(face_or_10_prob+6*num_card_prob)])
-            elseif s[dealer_idx] == :pair10
-                sp = SparseCat([(s[1], (:21, :staying)), (s[1], (:bust, :lost))] , [ace_card_prob,(face_or_10_prob+8*num_card_prob)])
+            if dealer_total == player_total_in
+                r_out = 0.0 # a tie!
+            elseif dealer_total > 21 
+                r_out = 1.0 # dealer busts, a win!
+            elseif dealer_total > player_total_in
+                r_out = -1.0 # a loss!
+            else # dealer_total < s[total_idx]
+                r_out = 1.0 # a win!
             end
+            sp_out = (player_total_out, dealer_showing_out, useable_ace_out)
 
-        else
-            println("Error")
-            sp = 0 # error condition
+        elseif a ==:hit 
+            new_card = rand(cards)
+
+            if useable_ace_in == true 
+                if new_card == :ace && ((player_total_in + 1) <= 21)
+                    player_total_out = player_total_in + 1
+                    dealer_showing_out = dealer_showing_in
+                    useable_ace_out = true
+                    # accept the ace as an 1 value, still maintain the useable ace
+                elseif new_card == :ace && ((player_total_in + 1) > 21)
+                    player_total_out = player_total_in - 11 + 1
+                    dealer_showing_out = dealer_showing_in
+                    useable_ace_out = false
+                    # accept the ace as an 1 value, use the useable ace
+                elseif new_card != :ace && ((player_total_in + new_card) > 21)
+                    player_total_out = player_total_in - 11 + 1 + new_card
+                    dealer_showing_out = dealer_showing_in
+                    useable_ace_out = false
+                else # new_card != :ace
+                    player_total_out = player_total_in + new_card
+                    dealer_showing_out = dealer_showing_in
+                    useable_ace_out = useable_ace_in
+                end
+            else
+                if new_card == :ace && ((player_total_in + 11) <= 21) 
+                    player_total_out = player_total_in + 11
+                    dealer_showing_out = dealer_showing_in
+                    useable_ace_out = true
+                    # accept the ace as an 11 value, now have a useable ace
+                elseif new_card == :ace && ((player_total_in + 11) > 21)
+                    player_total_out = player_total_in + 11
+                    dealer_showing_out = dealer_showing_in
+                    useable_ace_out = false
+                    # accepting the ace as an 11 would put us over, use the ace as a 1, still no usable ace 
+                else #new_card != :ace
+                    player_total_out = player_total_in + new_card
+                    dealer_showing_out = dealer_showing_in
+                    useable_ace_out = false
+                end
+            end
+            sp_out = (player_total_out, dealer_showing_out, useable_ace_out)
+
+
         end
-
-        return sp
+        return (sp=sp_out, r=r_out)
     end,
 
-    reward = function (s, a)
-        if s[player_idx][2] == :lost    # :lost is terminal state
-            return -1.0
-        elseif s[player_idx][2] == :won # :won is terminal state
-            return 1.0
-        else
-            return 0.0
-        end
-    end,
-    
-    observation = function (s, a, sp)
-        return s # not a pomdp, the exact state is known
-    end,
 
-    initialstate = Uniform(states), # intial draw from the deck, TODO: correct for drawing 21
-    discount = 1.0, # not a discounted game 
+    observation = function (s)
+        return Deterministic(s) # not a pomdp, the exact state is known
 
-    isterminal = function (s)
-        if s[player_idx][2] == :won || s[player_idx][2] == :lost || s[player_idx][2] == :push
+    end,
+    # initialstate = get_initial_state(), # intial draw from the deck
+    initialstate = Deterministic((5,5,false)), # intial draw from the deck - test
+    # initialstate = ImplicitDistribution() do rng
+    #             player_card = rand(cards)
+    #             dealer_card = rand(cards)
+    #             if player_card == :ace
+    #                 player_total = 11
+    #             else
+    #                 player_total = player_card
+    #             end
+    #             return (player_total, dealer_card, player_card==:ace)
+    #         end,
+
+    discount = 1.0, # not a discounted game
+    isterminal = function(s)
+        if s[1] == -1 # -1 is our terminal state
             return true
-        else 
+        else
             return false
         end
     end,
 )
-
-policy = FunctionPolicy(a->POMDPs.actions(bj)[1]) # always hit policy 
-sim = RolloutSimulator(max_steps=100)
-@show reward_ = [POMDPs.simulate(sim, bj, policy) for _ in 1:100]
-@show mean(reward_)
