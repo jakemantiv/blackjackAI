@@ -70,7 +70,7 @@ end
 
 function simulate_dealer(dealer_showing_in)
     dealer_turn_over = false
-    dealer_useable_ace = dealer_showing_in != :ace # was the dealer already showing an ace?
+    dealer_useable_ace = dealer_showing_in == :ace # was the dealer already showing an ace?
     dealer_blackjack = false
     num_turns = 1
 
@@ -108,6 +108,7 @@ function simulate_dealer(dealer_showing_in)
                 dealer_total += new_dealer_card # natural blackjack
             elseif dealer_useable_ace == true && (dealer_total + new_dealer_card) > 21
                 dealer_total += new_dealer_card - 11 + 1
+                dealer_useable_ace = false 
             else
                 dealer_total += new_dealer_card 
             end
@@ -121,7 +122,8 @@ function simulate_dealer(dealer_showing_in)
 end
 
 bj = QuickMDP(
-    actions = [:hit,:stay], # could add double down or surrender
+    actions = [:hit,:stay], # could add double down or surrender or split 
+    states = [(p_count,d_show,use_ace) for p_count in -1:31 for d_show in cards for use_ace in [true, false]],
     function(s, a, rng)
         player_total_in = s[total_idx]
         dealer_showing_in = s[dealer_showing_idx]
@@ -156,7 +158,7 @@ bj = QuickMDP(
             else # dealer_total < s[total_idx]
                 r_out = 1.0 # a win!
             end
-            sp_out = (player_total_out, dealer_showing_in, useable_ace_out)
+            sp_out = (player_total_out, dealer_showing_out, useable_ace_out)
 
         elseif a ==:hit 
             new_card = rand(cards)
@@ -204,6 +206,9 @@ bj = QuickMDP(
         return (sp=sp_out, r=r_out)
     end,
 
+    observation = function (s)
+        return Deterministic(s) # not a pomdp, the exact state is known
+    end,
     # initialstate = get_initial_state(), # intial draw from the deck
     initialstate = Deterministic((5,5,false)), # intial draw from the deck - test
     # initialstate = ImplicitDistribution() do rng
@@ -226,8 +231,3 @@ bj = QuickMDP(
         end
     end
 )
-# policy = FunctionPolicy(a->actions(bj)[1]) # evaluate always hit policy
-policy = FunctionPolicy(my_expert_policy) # evaluate 'expert' policy 
-sim = RolloutSimulator(max_steps=100)
-@show reward_ = [POMDPs.simulate(sim, bj, policy) for _ in 1:10000]
-@show mean(reward_)
