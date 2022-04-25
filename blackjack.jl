@@ -1,6 +1,7 @@
 using QuickPOMDPs: QuickMDP
 using POMDPs
 using POMDPModelTools: Deterministic, Uniform, SparseCat, ImplicitDistribution
+
 using POMDPPolicies: FunctionPolicy
 using POMDPSimulators: RolloutSimulator
 
@@ -202,12 +203,15 @@ bj = QuickMDP(
             end
             sp_out = (player_total_out, dealer_showing_out, useable_ace_out)
 
+
         end
         return (sp=sp_out, r=r_out)
     end,
 
+
     observation = function (s)
         return Deterministic(s) # not a pomdp, the exact state is known
+
     end,
     # initialstate = get_initial_state(), # intial draw from the deck
     initialstate = Deterministic((5,5,false)), # intial draw from the deck - test
@@ -229,5 +233,5 @@ bj = QuickMDP(
         else
             return false
         end
-    end
+    end,
 )
