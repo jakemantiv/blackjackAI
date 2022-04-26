@@ -191,7 +191,7 @@ bj = QuickMDP(
                     useable_ace_out = true
                     # accept the ace as an 11 value, now have a useable ace
                 elseif new_card == :ace && ((player_total_in + 11) > 21)
-                    player_total_out = player_total_in + 11
+                    player_total_out = player_total_in + 1
                     dealer_showing_out = dealer_showing_in
                     useable_ace_out = false
                     # accepting the ace as an 11 would put us over, use the ace as a 1, still no usable ace 
