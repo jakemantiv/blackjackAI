@@ -20,7 +20,8 @@ function double_Q_episode!(Q, Q1, Q2, env; eps=0.10, gamma=0.99, alpha=0.1)
     a = policy(s)
     r = act!(env, a)
     sp = env.s
-    hist = [s]
+    hist = Vector{statetype(env.m)}(undef,1)
+    hist[1] = s
 
     while !terminated(env)
         ap = policy(sp)
@@ -35,7 +36,9 @@ function double_Q_episode!(Q, Q1, Q2, env; eps=0.10, gamma=0.99, alpha=0.1)
         a = ap
         r = act!(env, a)
         sp = env.s
-        push!(hist, sp)
+        # push!(hist, sp)
+        push!(hist, s)
+
     end
 
     Q1[(s,a)] += alpha*(r - Q1[(s, a)])
@@ -45,7 +48,7 @@ function double_Q_episode!(Q, Q1, Q2, env; eps=0.10, gamma=0.99, alpha=0.1)
         Q[(s,a)] = (Q1[(s,a)] + Q2[(s,a)])/2.0 # return average of Q1 and Q2
     end
 
-    return (hist=hist, Q = copy(Q), time=time()-start)
+    return (hist=hist, Q = copy(Q1), time=time()-start)
 end
 
 function double_Q!(env; n_episodes=100)
@@ -76,11 +79,11 @@ end
 
 env = convert(AbstractEnv, bj)
 
-N = 100000
+N = 10000
 # N = 50_000
 double_Q_episodes = double_Q!(env, n_episodes=N);
 # lambda_episodes = sarsa_lambda!(env, n_episodes=N);
-
+finalQ = 
 policy = FunctionPolicy(a->actions(bj)[1]) # evaluate always hit policy
 policy = FunctionPolicy(my_expert_policy) # evaluate 'expert' policy 
 sim = RolloutSimulator(max_steps=100)
@@ -111,6 +114,7 @@ end
 
 plotlyjs()
 episodes = Dict("Double-Q"=>double_Q_episodes)
+finalQ = episodes["Double-Q"][end].Q
 p = plot(xlabel="steps in environment", ylabel="avg return")
 n = Int(round(N/20))
 stop = N

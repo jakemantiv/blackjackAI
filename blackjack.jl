@@ -17,19 +17,6 @@ dealer_showing_idx = 2
 # state[3] = useable ace?
 useable_ace_idx = 3
 
-get_initial_state = function()
-    player_draw = rand(cards)
-    dealer_draw = rand(cards)
-    if player_draw == :ace
-        player_total = 11
-        useable_ace = true
-    else 
-        player_total = player_draw
-        useable_ace = false
-    end
-    return (player_total, dealer_draw, useable_ace)
-end
-
 verbose_output = false
 
 function my_expert_policy(s)
@@ -131,20 +118,55 @@ end
 
 bj = QuickMDP(
     actions = [:hit,:stay], # could add double down or surrender or split 
-    states = [[(p_count,d_show,use_ace) for p_count in 1:22 for d_show in unique_cards for use_ace in [true, false]][:]; (-1, -1, false)],
+    states = [[(p_count,d_show,use_ace) for p_count in 4:22 for d_show in unique_cards for use_ace in [true, false]][:]; (-1, -1, false); (0,0,false)],
     function(s, a, rng)
         player_total_in = s[total_idx]
         dealer_showing_in = s[dealer_showing_idx]
         useable_ace_in = s[useable_ace_idx]
-        if verbose_output
-            @printf("IN Player: %f, Dealer: %f, Ace: %s , Action: %s\n", player_total_in,dealer_showing_in, useable_ace_in, a)
-        end
+
         player_total_out = -1
         dealer_showing_out = -1
         useable_ace_out = false
 
         r_out = 0.0
-        if s[total_idx] > 21 # went over 21, player automatically loses
+        if s[total_idx] == 0 # initial state, dealer and player draws random card, regardless of action
+            player_draw1 = rand(cards)
+            player_draw2 = rand(cards)
+            dealer_showing_out = rand(cards)
+            if player_draw1 == :ace && player_draw2 != :ace
+                player_total_out = 11 + player_draw2
+                useable_ace_out = true
+            elseif player_draw1 != :ace && player_draw2 == :ace
+                player_total_out = 11 + player_draw1
+                useable_ace_out = true
+            elseif player_draw1 == :ace && player_draw2 == :ace
+                # double ace
+                player_total_out = 11 + 1
+                useable_ace_out = true
+            else
+                player_total_out = player_draw1 + player_draw2
+                useable_ace_out = false
+            end
+
+            if verbose_output
+                @printf("IN Player: %f, Dealer: %s, Ace: %s , Action: %s\n", player_total_out,dealer_showing_out, useable_ace_out, a)
+            end
+            # check for natural blackjack
+            if player_total_out == 21
+                dealer_blackjack, dealer_total = simulate_dealer(dealer_showing_out)
+                if !dealer_blackjack
+                    r_out = 1.0
+                    # you won!
+                else
+                    r_out = 0.0
+                    #... unless the dealer also got a natural blackjack
+                end
+                sp_out = (-1,-1,false) # return the terminal state 
+            else
+                sp_out = (player_total_out, dealer_showing_out, useable_ace_out)
+                # continue with normal play
+            end
+        elseif s[total_idx] > 21 # went over 21, player automatically loses
             r_out = -1.0
             sp_out = (player_total_out, dealer_showing_out, useable_ace_out)
 #        elseif s[total_idx] == 21 # player hit 21, player automatically wins unless dealer blackjacks? 
@@ -228,7 +250,7 @@ bj = QuickMDP(
             sp_out = (-1, -1, false) # terminal state to limit size of state space
         end
         if verbose_output
-            @printf("OUT: Player: %f, Dealer: %f, Ace: %s\n", player_total_out,dealer_showing_out, useable_ace_out)
+            @printf("OUT: Player: %f, Dealer: %s, Ace: %s\n", player_total_out,dealer_showing_out, useable_ace_out)
         end
 
         return (sp=sp_out, r=r_out)
@@ -240,7 +262,7 @@ bj = QuickMDP(
 
     end,
 
-    initialstate = Deterministic((5,5,false)),
+    initialstate = Deterministic((0,0,false)),
     # initialstate = get_initial_state(), # intial draw from the deck
     # initialstate = ImplicitDistribution() do rng
     #             player_card = rand(cards)
