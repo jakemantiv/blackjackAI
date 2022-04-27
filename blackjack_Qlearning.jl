@@ -76,8 +76,8 @@ end
 
 env = convert(AbstractEnv, bj)
 
-# N = 5
-N = 5_000
+N = 100000
+# N = 50_000
 double_Q_episodes = double_Q!(env, n_episodes=N);
 # lambda_episodes = sarsa_lambda!(env, n_episodes=N);
 
@@ -90,7 +90,7 @@ sim = RolloutSimulator(max_steps=100)
 
 
 
-function my_evaluate(env, policy, n_episodes=1000, max_steps=1000, γ=1.0)
+function my_evaluate(env, policy, n_episodes=10000, max_steps=21, γ=1.0)
     returns = Float64[]
     for _ in 1:n_episodes
         t = 0
@@ -112,7 +112,7 @@ end
 plotlyjs()
 episodes = Dict("Double-Q"=>double_Q_episodes)
 p = plot(xlabel="steps in environment", ylabel="avg return")
-n = Int(round(N/250))
+n = Int(round(N/20))
 stop = N
 for (name, eps) in episodes
     Q = Dict((s, a) => 0.0 for s in states(env.m), a in actions(env))

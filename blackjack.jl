@@ -8,6 +8,7 @@ using POMDPSimulators: RolloutSimulator
 
 # helper functions
 cards = [:ace, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10] # 4 10s for the face cards + 10
+unique_cards = [:ace, 2, 3, 4, 5, 6, 7, 8, 9, 10] # 4 10s for the face cards + 10
 # state[1] = players hand
 total_idx = 1
 # state[2] = dealer showing
@@ -124,7 +125,7 @@ end
 
 bj = QuickMDP(
     actions = [:hit,:stay], # could add double down or surrender or split 
-    states = [(p_count,d_show,use_ace) for p_count in -1:31 for d_show in cards for use_ace in [true, false]],
+    states = [[(p_count,d_show,use_ace) for p_count in 1:22 for d_show in unique_cards for use_ace in [true, false]][:]; (-1, -1, false)],
     function(s, a, rng)
         player_total_in = s[total_idx]
         dealer_showing_in = s[dealer_showing_idx]
@@ -204,6 +205,12 @@ bj = QuickMDP(
             sp_out = (player_total_out, dealer_showing_out, useable_ace_out)
 
 
+        end
+        if sp_out[1] > 21
+            sp_out = (22, dealer_showing_out, useable_ace_out) # limit any hand over 21 to 22 to limit size of state space 
+        end
+        if sp_out[1] == -1 
+            sp_out = (-1, -1, false) # terminal state to limit size of state space
         end
         return (sp=sp_out, r=r_out)
     end,
