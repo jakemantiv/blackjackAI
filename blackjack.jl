@@ -166,18 +166,11 @@ bj = QuickMDP(
                 sp_out = (player_total_out, dealer_showing_out, useable_ace_out)
                 # continue with normal play
             end
+            
         elseif s[total_idx] > 21 # went over 21, player automatically loses
             r_out = -1.0
             sp_out = (player_total_out, dealer_showing_out, useable_ace_out)
-#        elseif s[total_idx] == 21 # player hit 21, player automatically wins unless dealer blackjacks? 
-#            dealer_blackjack, dealer_total = simulate_dealer(dealer_showing_in)
-#            @printf("Dealer Total:  %i, Dealer Blackjack: %s \n", dealer_total, dealer_blackjack)
-#            if dealer_blackjack
-#                r_out = 0.0
-#            else
-#                r_out = 1.0
-#            end
-#            sp_out = (player_total_out, dealer_showing_out, useable_ace_out)
+
         elseif a == :stay
             # no change in player count, dealer follows a set strategy
             dealer_blackjack, dealer_total = simulate_dealer(dealer_showing_in)
@@ -263,17 +256,6 @@ bj = QuickMDP(
     end,
 
     initialstate = Deterministic((0,0,false)),
-    # initialstate = get_initial_state(), # intial draw from the deck
-    # initialstate = ImplicitDistribution() do rng
-    #             player_card = rand(cards)
-    #             dealer_card = rand(cards)
-    #             if player_card == :ace
-    #                 player_total = 11
-    #             else
-    #                 player_total = player_card
-    #             end
-    #             return (player_total, dealer_card, player_card==:ace)
-    #         end,
 
     discount = 1.0, # not a discounted game
     isterminal = function(s)

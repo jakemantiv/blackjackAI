@@ -1,6 +1,7 @@
 include("blackjack.jl")
 using CommonRLInterface: render, actions, act!, observe, reset!, AbstractEnv, observations, terminated, clone
 using CommonRLInterface
+using ProgressBars
 
 
 function CommonRLInterface.reset!(m)
@@ -9,7 +10,7 @@ end
 
 ### double-Q Learning ###
 
-function double_Q_episode!(Q, Q1, Q2, env; eps=0.10, gamma=0.99, alpha=0.1)
+function double_Q_episode!(Q, Q1, Q2, env; eps=0.10, gamma=1.0, alpha=0.01)
     start = time()
     
     function policy(s)
@@ -62,7 +63,7 @@ function double_Q!(env; n_episodes=100)
     Q2 = Dict((s,a) => Q0 for s in states(env.m), a in actions(env))
     episodes = []
     
-    for i in 1:n_episodes
+    for i in ProgressBar(1:n_episodes)
         reset!(env)
         push!(episodes, double_Q_episode!(Q, Q1, Q2, env;
                                           eps= max(0.35,1.0-i/n_episodes))) # use a decaying epsilon
@@ -73,12 +74,12 @@ end
 
 
 ### SARSA-lambda ###
-function sarsa_lambda_episode!(Q, env; ϵ=0.10, γ=1.0, α=0.1, λ=0.95)
+function sarsa_lambda_episode!(Q, env; eps=0.10, gamma=1.0, alpha=0.01, lambda=0.95)
 
     start = time()
     
     function policy(s)
-        if rand() < ϵ
+        if rand() < eps
             return rand(actions(env)) # choose random action epsilon fraction of the time
         else
             return argmax(a->Q[(s, a)], actions(env)) # otherwise use greedy policy
@@ -98,11 +99,11 @@ function sarsa_lambda_episode!(Q, env; ϵ=0.10, γ=1.0, α=0.1, λ=0.95)
 
         N[(s, a)] = get(N, (s, a), 0.0) + 1
 
-        δ = r + γ*Q[(sp, ap)] - Q[(s, a)]
+        δ = r + gamma*Q[(sp, ap)] - Q[(s, a)]
 
         for ((s, a), n) in N
-            Q[(s, a)] += α*δ*n
-            N[(s, a)] *= γ*λ
+            Q[(s, a)] += alpha*δ*n
+            N[(s, a)] *= gamma*lambda
         end
 
         s = sp
@@ -116,8 +117,8 @@ function sarsa_lambda_episode!(Q, env; ϵ=0.10, γ=1.0, α=0.1, λ=0.95)
     δ = r - Q[(s, a)]
 
     for ((s, a), n) in N
-        Q[(s, a)] += α*δ*n
-        N[(s, a)] *= γ*λ
+        Q[(s, a)] += alpha*δ*n
+        N[(s, a)] *= gamma*lambda
     end
 
     return (hist=hist, Q = copy(Q), time=time()-start)
@@ -128,10 +129,10 @@ function sarsa_lambda!(env; n_episodes=100, kwargs...)
     Q = Dict((s, a) => Q0 for s in states(env.m), a in actions(env))
     episodes = []
     
-    for i in 1:n_episodes
+    for i in ProgressBar(1:n_episodes)
         reset!(env)
         push!(episodes, sarsa_lambda_episode!(Q, env;
-                                               ϵ=max(0.35, 1.0-i/n_episodes), 
+                                               eps=max(0.35, 1.0-i/n_episodes), 
                                             kwargs...))
     end
     
@@ -139,8 +140,7 @@ function sarsa_lambda!(env; n_episodes=100, kwargs...)
 end
 
 ### vanilla-Q Learning ###
-
-function vanilla_Q_episode!(Q, env; eps=0.10, gamma=1.0, alpha=0.03)
+function vanilla_Q_episode!(Q, env; eps=0.10, gamma=1.0, alpha=0.01)
     start = time()
     
     function policy(s)
@@ -180,7 +180,56 @@ function vanilla_Q!(env; n_episodes=100)
     Q = Dict((s,a) => Q0 for s in states(env.m), a in actions(env))
     episodes = []
     
-    for i in 1:n_episodes
+    for i in ProgressBar(1:n_episodes)
+        reset!(env)
+        push!(episodes, vanilla_Q_episode!(Q, env;
+                                          eps= max(0.35,1.0-i/n_episodes))) # use a decaying epsilon
+    end
+    
+    return episodes
+end
+
+### SARSA ###
+function sarsa_episode!(Q, env; eps=0.10, gamma=1.0, alpha=0.01)
+    start = time()
+    
+    function policy(s)
+        if rand() < eps
+            return rand(actions(env)) # choose random action epsilon fraction of the time
+        else
+            return argmax(a->Q[(s, a)], actions(env)) # otherwise use greedy policy
+        end
+    end
+
+    s = env.s
+    a = policy(s)
+    r = act!(env, a)
+    sp = env.s
+    hist = Vector{statetype(env.m)}(undef,1)
+    hist[1] = s
+
+    while !terminated(env)
+        ap = policy(sp)
+        Q[(s,a)] += alpha*(r + gamma*Q[(sp, ap)] - Q[(s, a)])        
+        s = sp
+        a = ap
+        r = act!(env, a)
+        sp = env.s
+        push!(hist, s)
+
+    end
+
+    Q[(s,a)] += alpha*(r - Q[(s, a)])
+
+    return (hist=hist, Q = copy(Q), time=time()-start)
+end
+
+function sarsa!(env; n_episodes=100)
+    Q0 = 0.0
+    Q = Dict((s,a) => Q0 for s in states(env.m), a in actions(env))
+    episodes = []
+    
+    for i in ProgressBar(1:n_episodes)
         reset!(env)
         push!(episodes, vanilla_Q_episode!(Q, env;
                                           eps= max(0.35,1.0-i/n_episodes))) # use a decaying epsilon
