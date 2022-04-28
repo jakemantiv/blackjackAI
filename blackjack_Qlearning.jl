@@ -49,9 +49,9 @@ function double_Q_episode!(Q, Q1, Q2, env; eps=0.10, gamma=1.0, alpha=0.01)
     Q1[(s,a)] += alpha*(r - Q1[(s, a)])
     Q2[(s,a)] += alpha*(r - Q2[(s, a)])
 
-    for s in states(env.m), a in actions(env)
-        Q[(s,a)] = (Q1[(s,a)] + Q2[(s,a)])/2.0 # return average of Q1 and Q2
-    end
+    # for s in states(env.m), a in actions(env)
+    #     Q[(s,a)] = (Q1[(s,a)] + Q2[(s,a)])/2.0 # return average of Q1 and Q2
+    # end
 
     return (hist=hist, Q = copy(Q1), time=time()-start)
 end

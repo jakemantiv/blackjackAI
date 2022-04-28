@@ -116,13 +116,17 @@ function select_action_mcts_log_iterations(m, s)
     d = 5
     c = 2.0*(1.0+1.0) # assume a max reward of 100 and min reward of 0
     n_iterations = 0
-    while time_ns() < start + 10_000_000 # run for a maximum of 40 ms to leave 10 ms to select an action
+    while time_ns() < start + 20_000_000 # run for a maximum of 40 ms to leave 10 ms to select an action
         my_sim!(m,s, n, q, t, d, c)
         n_iterations += 1
     end
 
     # select a good action based on q
-    return argmax(a->q[(s,a)],m.data.actions), n_iterations
+    if !haskey(q,(s,a))
+        return :hit
+    else
+        return argmax(a->q[(s,a)],m.data.actions), n_iterations
+    end
 end
 
 # Simulate MCTS
@@ -141,25 +145,3 @@ function my_simulate_mcts(mdp, s0)
     end
     return r_total, mean(n_logged_vec)
 end
-
-m = bj
-N_sims = 1000
-s0 = (0,0,false)
-# heuristic policy eval
-R_heuristic = Vector{Float64}()
-for k in 1:N_sims
-    r = my_simulate_heuristic(m,s0)
-    push!(R_heuristic,r)
-end
-println("Heuristic Mean Reward = " * string(mean(R_heuristic)))
-println("Heuristic Standard error of the mean reward = " * string(std(R_heuristic)/sqrt(N_sims)))
-
-# mcts policy eval
-R_mcts = Vector{Float64}()
-for k in ProgressBar(1:N_sims)
-    r, avg_iterations = my_simulate_mcts(m,s0)
-    # println("Average MCTS iterations for run " * string(k) * " = " * string(avg_iterations))
-    push!(R_mcts,r)
-end
-println("MCTS Mean Reward = " * string(mean(R_mcts)))
-println("MCTS Standard error of the mean reward = " * string(std(R_mcts)/sqrt(N_sims)))
