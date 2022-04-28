@@ -1,9 +1,13 @@
 include("blackjack.jl")
 using CommonRLInterface: render, actions, act!, observe, reset!, AbstractEnv, observations, terminated, clone
 using CommonRLInterface
-using Statistics: mean
-using Plots
 
+
+function CommonRLInterface.reset!(m)
+    m.s = (0,0,false)
+end
+
+### double-Q Learning ###
 
 function double_Q_episode!(Q, Q1, Q2, env; eps=0.10, gamma=0.99, alpha=0.1)
     start = time()
@@ -52,83 +56,135 @@ function double_Q_episode!(Q, Q1, Q2, env; eps=0.10, gamma=0.99, alpha=0.1)
 end
 
 function double_Q!(env; n_episodes=100)
-    Q = Dict((s,a) => 0.0 for s in states(env.m), a in actions(env))
-    Q1 = Dict((s,a) => 0.0 for s in states(env.m), a in actions(env))
-    Q2 = Dict((s,a) => 0.0 for s in states(env.m), a in actions(env))
+    Q0 = 1.0
+    Q = Dict((s,a) => Q0 for s in states(env.m), a in actions(env))
+    Q1 = Dict((s,a) => Q0 for s in states(env.m), a in actions(env))
+    Q2 = Dict((s,a) => Q0 for s in states(env.m), a in actions(env))
     episodes = []
     
     for i in 1:n_episodes
         reset!(env)
         push!(episodes, double_Q_episode!(Q, Q1, Q2, env;
-                                          eps= max(0.35,0.0))) # use a constant epsilon
-
+                                          eps= max(0.35,1.0-i/n_episodes))) # use a decaying epsilon
     end
     
     return episodes
 end
 
 
-function CommonRLInterface.reset!(m)
-    m.s = (5,5,false)
-end
+### SARSA-lambda ###
+function sarsa_lambda_episode!(Q, env; ϵ=0.10, γ=1.0, α=0.1, λ=0.95)
 
-# function CommonRLInterface.observe(m::MDPCommonRLEnv)
-#     return m.s
-# end
-
-
-env = convert(AbstractEnv, bj)
-
-N = 10000
-# N = 50_000
-double_Q_episodes = double_Q!(env, n_episodes=N);
-# lambda_episodes = sarsa_lambda!(env, n_episodes=N);
-finalQ = 
-policy = FunctionPolicy(a->actions(bj)[1]) # evaluate always hit policy
-policy = FunctionPolicy(my_expert_policy) # evaluate 'expert' policy 
-sim = RolloutSimulator(max_steps=100)
-@show reward_ = [POMDPs.simulate(sim, bj, policy) for _ in 1:10000]
-@show expert_polcy_mean_reward = mean(reward_)
-
-
-
-
-function my_evaluate(env, policy, n_episodes=10000, max_steps=21, γ=1.0)
-    returns = Float64[]
-    for _ in 1:n_episodes
-        t = 0
-        r = 0.0
-        reset!(env)
-        s = env.s
-        while !terminated(env)
-            a = policy(s)
-            r += γ^t*act!(env, a)
-            s = env.s
-            t += 1
+    start = time()
+    
+    function policy(s)
+        if rand() < ϵ
+            return rand(actions(env)) # choose random action epsilon fraction of the time
+        else
+            return argmax(a->Q[(s, a)], actions(env)) # otherwise use greedy policy
         end
-        push!(returns, r)
     end
-    return returns
+
+    s = env.s
+    a = policy(s)
+    r = act!(env, a)
+    sp = env.s
+    hist = Vector{statetype(env.m)}(undef,1)
+    hist[1] = s
+    N = Dict((s, a) => 0.0 for s in states(env.m), a in actions(env))
+
+    while !terminated(env)
+        ap = policy(sp)
+
+        N[(s, a)] = get(N, (s, a), 0.0) + 1
+
+        δ = r + γ*Q[(sp, ap)] - Q[(s, a)]
+
+        for ((s, a), n) in N
+            Q[(s, a)] += α*δ*n
+            N[(s, a)] *= γ*λ
+        end
+
+        s = sp
+        a = ap
+        r = act!(env, a)
+        sp = env.s
+        push!(hist, sp)
+    end
+
+    N[(s, a)] = get(N, (s, a), 0.0) + 1
+    δ = r - Q[(s, a)]
+
+    for ((s, a), n) in N
+        Q[(s, a)] += α*δ*n
+        N[(s, a)] *= γ*λ
+    end
+
+    return (hist=hist, Q = copy(Q), time=time()-start)
 end
 
-
-plotlyjs()
-episodes = Dict("Double-Q"=>double_Q_episodes)
-finalQ = episodes["Double-Q"][end].Q
-p = plot(xlabel="steps in environment", ylabel="avg return")
-n = Int(round(N/20))
-stop = N
-for (name, eps) in episodes
-    Q = Dict((s, a) => 0.0 for s in states(env.m), a in actions(env))
-    xs = [0]
-    ys = [mean(my_evaluate(env, s->argmax(a->Q[(s, a)], actions(env))))]
-    for i in n:n:min(stop, length(eps))
-        newsteps = sum(length(ep.hist) for ep in eps[i-n+1:i])
-        push!(xs, last(xs) + newsteps)
-        Q = eps[i].Q
-        push!(ys, mean(my_evaluate(env, s->argmax(a->Q[(s, a)], actions(env)))))
-    end    
-    plot!(p, xs, ys, label=name, legend=:bottomright, minorticks=true)
+function sarsa_lambda!(env; n_episodes=100, kwargs...)
+    Q0 = 1.0
+    Q = Dict((s, a) => Q0 for s in states(env.m), a in actions(env))
+    episodes = []
+    
+    for i in 1:n_episodes
+        reset!(env)
+        push!(episodes, sarsa_lambda_episode!(Q, env;
+                                               ϵ=max(0.35, 1.0-i/n_episodes), 
+                                            kwargs...))
+    end
+    
+    return episodes
 end
-plot!(p,[xlims(p)[1], xlims(p)[2]], ones(length(xlims(p))).*expert_polcy_mean_reward,label="Expert Policy")
-display(p)
+
+### vanilla-Q Learning ###
+
+function vanilla_Q_episode!(Q, env; eps=0.10, gamma=1.0, alpha=0.03)
+    start = time()
+    
+    function policy(s)
+        if rand() < eps
+            return rand(actions(env)) # choose random action epsilon fraction of the time
+        else
+            return argmax(a->Q[(s, a)], actions(env)) # otherwise use greedy policy
+        end
+    end
+
+    s = env.s
+    a = policy(s)
+    r = act!(env, a)
+    sp = env.s
+    hist = Vector{statetype(env.m)}(undef,1)
+    hist[1] = s
+
+    while !terminated(env)
+        ap = policy(sp)
+        Q[(s,a)] += alpha*(r + gamma*maximum(a->Q[(sp,a)], actions(env)) - Q[(s,a)])
+        s = sp
+        a = ap
+        r = act!(env, a)
+        sp = env.s
+        # push!(hist, sp)
+        push!(hist, s)
+
+    end
+
+    Q[(s,a)] += alpha*(r - Q[(s, a)])
+
+    return (hist=hist, Q = copy(Q), time=time()-start)
+end
+
+function vanilla_Q!(env; n_episodes=100)
+    Q0 = 0.0
+    Q = Dict((s,a) => Q0 for s in states(env.m), a in actions(env))
+    episodes = []
+    
+    for i in 1:n_episodes
+        reset!(env)
+        push!(episodes, vanilla_Q_episode!(Q, env;
+                                          eps= max(0.35,1.0-i/n_episodes))) # use a decaying epsilon
+    end
+    
+    return episodes
+end
