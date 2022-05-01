@@ -57,7 +57,7 @@ function double_Q_episode!(Q, Q1, Q2, env; eps=0.10, gamma=1.0, alpha=0.01)
 end
 
 function double_Q!(env; n_episodes=100)
-    Q0 = 1.0
+    Q0 = 0.0
     Q = Dict((s,a) => Q0 for s in states(env.m), a in actions(env))
     Q1 = Dict((s,a) => Q0 for s in states(env.m), a in actions(env))
     Q2 = Dict((s,a) => Q0 for s in states(env.m), a in actions(env))
@@ -125,7 +125,7 @@ function sarsa_lambda_episode!(Q, env; eps=0.10, gamma=1.0, alpha=0.01, lambda=0
 end
 
 function sarsa_lambda!(env; n_episodes=100, kwargs...)
-    Q0 = 1.0
+    Q0 = 0.0
     Q = Dict((s, a) => Q0 for s in states(env.m), a in actions(env))
     episodes = []
     

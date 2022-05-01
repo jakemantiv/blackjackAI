@@ -114,15 +114,15 @@ function select_action_mcts_log_iterations(m, s)
     q = Dict{Tuple{statetype(m), actiontype(m)}, Float64}()
     t = Dict{Tuple{statetype(m), actiontype(m), statetype(m)}, Int}()
     d = 5
-    c = 2.0*(1.0+1.0) # assume a max reward of 100 and min reward of 0
+    c = 2.0*(1.0+1.0) # assume a max reward of 1 and min reward of -1
     n_iterations = 0
-    while time_ns() < start + 20_000_000 # run for a maximum of 40 ms to leave 10 ms to select an action
+    while time_ns() < start + 10_000_000 # run for a maximum of 10 ms 
         my_sim!(m,s, n, q, t, d, c)
         n_iterations += 1
     end
 
     # select a good action based on q
-    if !haskey(q,(s,a))
+    if !haskey(q,(s,:hit)) && !haskey(q,(s,:stay))
         return :hit
     else
         return argmax(a->q[(s,a)],m.data.actions), n_iterations
