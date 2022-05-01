@@ -10,6 +10,10 @@ using Printf
 # helper functions
 cards = [:ace, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10] # 4 10s for the face cards + 10
 unique_cards = [:ace, 2, 3, 4, 5, 6, 7, 8, 9, 10] # 4 10s for the face cards + 10
+unique_hands = [(4, false), (5, false), (6, false), (7, false), (8,false), (9,false), (10, false), (11,false), (12,false), (13, false), (14, false), (15, false),
+(16, false), (17, false), (18, false), (19, false), (20, false), (21, false), (12, true), (13, true), (14, true), (15, true), (16, true), (17, true), (18, true),
+(19, true), (20, true), (21, true), (22,false)]
+
 # state[1] = players hand
 total_idx = 1
 # state[2] = dealer showing
@@ -118,7 +122,9 @@ end
 
 bj = QuickMDP(
     actions = [:hit,:stay], # could add double down or surrender or split 
-    states = [[(p_count,d_show,use_ace) for p_count in 4:22 for d_show in unique_cards for use_ace in [true, false]][:]; (-1, -1, false); (0,0,false)],
+    #states = [[(p_count,d_show,use_ace) for p_count in 4:22 for d_show in unique_cards for use_ace in [true, false]][:]; (-1, -1, false); (0,0,false)],
+states = [[(p_count,d_show,use_ace) for (p_count, use_ace) in unique_hands for d_show in unique_cards][:]; (-1, -1, false); (0,0,false)],
+
     function(s, a, rng)
         player_total_in = s[total_idx]
         dealer_showing_in = s[dealer_showing_idx]

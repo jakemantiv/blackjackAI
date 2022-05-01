@@ -122,19 +122,12 @@ function select_action_mcts_log_iterations(m, s)
     end
 
     # select a good action based on q
-    if !haskey(q,(s,:hit)) && !haskey(q,(s,:stay))
+    if !haskey(q,(s,a))
         return :hit
     else
         return argmax(a->q[(s,a)],m.data.actions), n_iterations
     end
 end
-# histories_unwrapped = []
-# for h in histories
-#     for hh in h
-#         push!(histories_unwrapped, hh)
-#     end
-# end
-
 
 # Simulate MCTS
 function my_simulate_mcts(mdp, s0)

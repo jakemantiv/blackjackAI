@@ -5,6 +5,20 @@ using Statistics: mean, std
 using Plots
 env = convert(AbstractEnv, bj)
 
+function save_policy_to_csv(env, Q, fn)
+    out = []
+    for s in states(env.m)
+        a = argmax(a->Q[(s, a)], actions(env))
+        if a == :hit
+            a = "H"
+        else
+            a = "S"
+        end
+            
+        push!(out, (s[1],s[2],s[3],a))
+    end
+    writedlm(fn, out,',')
+end
 
 function my_evaluate(env, policy, n_episodes=10000, max_steps=21, gamma=1.0)
     returns = Float64[]
@@ -46,6 +60,11 @@ reward_ = my_evaluate(env, s->my_expert_policy(s))
 expert_polcy_mean_reward = mean(reward_)
 expert_policy_standard_error = std(reward_)/sqrt(N_expert)
 println("Done with expert")
+
+println("Saving CSVs")
+save_policy_to_csv(env, double_Q_episodes[end].Q, "/Users/Stephen/Desktop/DQ.csv")
+save_policy_to_csv(env, vanilla_Q_episodes[end].Q, "/Users/Stephen/Desktop/VanillaQ.csv")
+save_policy_to_csv(env, sarsa_episodes[end].Q, "/Users/Stephen/Desktop/SARSA.csv") 
 
 episodes = Dict("Double-Q"=>double_Q_episodes, "SARSA-lambda"=>sarsa_episodes, "Q-learning"=>vanilla_Q_episodes, "SARSA"=>sarsa_episodes)
 finalQ = episodes["Double-Q"][end].Q
@@ -140,3 +159,4 @@ for (name,eps) in episodes
     println(name *" Win Rate = "* string(count(i->(i==1.0),reward_eval)/length(reward_eval)))
     println("")
 end
+
