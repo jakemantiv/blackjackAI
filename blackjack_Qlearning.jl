@@ -10,7 +10,7 @@ end
 
 ### double-Q Learning ###
 
-function double_Q_episode!(Q, Q1, Q2, env; eps=0.10, gamma=1.0, alpha=0.01)
+function double_Q_episode!(Q, Q1, Q2, env; eps=0.50, gamma=1.0, alpha=0.01)
     start = time()
     
     function policy(s)
@@ -37,6 +37,7 @@ function double_Q_episode!(Q, Q1, Q2, env; eps=0.10, gamma=1.0, alpha=0.01)
             # update Q2 the other half
             Q2[(s,a)] += alpha*(r + gamma*Q1[sp, argmax(a->Q2[sp,a], actions(env))] - Q2[(s, a)])
         end
+        Q[(s,a)] += (Q1[(s,a)] + Q2[(s,a)])/2.0
         s = sp
         a = ap
         r = act!(env, a)
@@ -48,10 +49,8 @@ function double_Q_episode!(Q, Q1, Q2, env; eps=0.10, gamma=1.0, alpha=0.01)
 
     Q1[(s,a)] += alpha*(r - Q1[(s, a)])
     Q2[(s,a)] += alpha*(r - Q2[(s, a)])
+    Q[(s,a)] += (Q1[(s,a)] + Q2[(s,a)])/2.0
 
-    # for s in states(env.m), a in actions(env)
-    #     Q[(s,a)] = (Q1[(s,a)] + Q2[(s,a)])/2.0 # return average of Q1 and Q2
-    # end
 
     return (hist=hist, Q = copy(Q1), time=time()-start)
 end
@@ -74,7 +73,7 @@ end
 
 
 ### SARSA-lambda ###
-function sarsa_lambda_episode!(Q, env; eps=0.10, gamma=1.0, alpha=0.01, lambda=0.95)
+function sarsa_lambda_episode!(Q, env; eps=0.50, gamma=1.0, alpha=0.01, lambda=0.95)
 
     start = time()
     
@@ -140,7 +139,7 @@ function sarsa_lambda!(env; n_episodes=100, kwargs...)
 end
 
 ### vanilla-Q Learning ###
-function vanilla_Q_episode!(Q, env; eps=0.10, gamma=1.0, alpha=0.01)
+function vanilla_Q_episode!(Q, env; eps=0.50, gamma=1.0, alpha=0.01)
     start = time()
     
     function policy(s)
@@ -176,21 +175,22 @@ function vanilla_Q_episode!(Q, env; eps=0.10, gamma=1.0, alpha=0.01)
 end
 
 function vanilla_Q!(env; n_episodes=100)
-    Q0 = 0.0
+    Q0 = 1.0
     Q = Dict((s,a) => Q0 for s in states(env.m), a in actions(env))
     episodes = []
     
     for i in ProgressBar(1:n_episodes)
         reset!(env)
+        
         push!(episodes, vanilla_Q_episode!(Q, env;
-                                          eps= max(0.35,1.0-i/n_episodes))) # use a decaying epsilon
+                                          eps= max(0.35,0.0))) # use a decaying epsilon
     end
     
     return episodes
 end
 
 ### SARSA ###
-function sarsa_episode!(Q, env; eps=0.10, gamma=1.0, alpha=0.01)
+function sarsa_episode!(Q, env; eps=0.50, gamma=1.0, alpha=0.01)
     start = time()
     
     function policy(s)
@@ -225,7 +225,7 @@ function sarsa_episode!(Q, env; eps=0.10, gamma=1.0, alpha=0.01)
 end
 
 function sarsa!(env; n_episodes=100)
-    Q0 = 0.0
+    Q0 = 1.0
     Q = Dict((s,a) => Q0 for s in states(env.m), a in actions(env))
     episodes = []
     
