@@ -1,4 +1,5 @@
 include("blackjack_Qlearning.jl")
+include("blackjack_MCTS.jl")
 using CommonRLInterface
 using Statistics: mean, std
 using Plots
@@ -36,9 +37,9 @@ function my_evaluate(env, policy, n_episodes=10000, max_steps=21, gamma=1.0)
     end
     return returns
 end
-
-N_expert = 10000
-N_doubleQ = 40000
+GC.gc() # garbage cleanup
+N_expert = 100000
+N_doubleQ = 100000
 # N = 50_000
 println("Starting double Q")
 double_Q_episodes = double_Q!(env, n_episodes=N_doubleQ);
@@ -66,8 +67,8 @@ save_policy_to_csv(env, vanilla_Q_episodes[end].Q, "/Users/Stephen/Desktop/Vanil
 save_policy_to_csv(env, sarsa_episodes[end].Q, "/Users/Stephen/Desktop/SARSA.csv") 
 
 episodes = Dict("Double-Q"=>double_Q_episodes, "SARSA-lambda"=>sarsa_episodes, "Q-learning"=>vanilla_Q_episodes, "SARSA"=>sarsa_episodes)
-final_Qs = 
 finalQ = episodes["Double-Q"][end].Q
+plotlyjs()
 p = plot(xlabel="steps in environment", ylabel="avg return")
 n = Int(round(N_doubleQ/20))
 stop = N_doubleQ
@@ -118,8 +119,8 @@ display(q)
 println("Expert Mean Reward = " * string(expert_polcy_mean_reward))
 println("Expert Standard error of the mean reward = "*string(expert_policy_standard_error))
 
-N_heuristic = 2000
-N_MCTS = 1000
+N_heuristic = 1000
+N_MCTS = 100
 s0 = (0,0,false)
 # heuristic policy eval
 R_heuristic = Vector{Float64}()
@@ -129,7 +130,8 @@ for k in 1:N_heuristic
 end
 println("Heuristic Mean Reward = " * string(mean(R_heuristic)))
 println("Heuristic Standard error of the mean reward = " * string(std(R_heuristic)/sqrt(N_heuristic)))
-
+println("Heuristic 95% confidence = " * string(1.96*std(R_heuristic)/sqrt(N_heuristic)))
+println("")
 # mcts policy eval
 R_mcts = Vector{Float64}()
 for k in ProgressBar(1:N_MCTS)
@@ -138,6 +140,8 @@ for k in ProgressBar(1:N_MCTS)
 end
 println("MCTS Mean Reward = " * string(mean(R_mcts)))
 println("MCTS Standard error of the mean reward = " * string(std(R_mcts)/sqrt(N_MCTS)))
+println("MCTS 95% confidence = " * string(1.96*std(R_mcts)/sqrt(N_MCTS)))
+println("")
 
 
 for (name,eps) in episodes
@@ -145,5 +149,7 @@ for (name,eps) in episodes
     reward_eval = my_evaluate(env, s->argmax(a->Q[(s, a)], actions(env)))
     println(name *" Mean Reward = " * string(mean(reward_eval)))
     println(name *" Standard error of the mean reward = " * string(std(reward_eval)/sqrt(N_eval)))
+    println(name *" 95% confidence = " * string(1.96*std(reward_eval)/sqrt(N_eval)))
+    println("")
 end
 
