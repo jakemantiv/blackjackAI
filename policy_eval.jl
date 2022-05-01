@@ -3,6 +3,7 @@ include("blackjack_MCTS.jl")
 using CommonRLInterface
 using Statistics: mean, std
 using Plots
+using DelimitedFiles
 env = convert(AbstractEnv, bj)
 
 function save_policy_to_csv(env, Q, fn)
@@ -39,7 +40,7 @@ function my_evaluate(env, policy, n_episodes=10000, max_steps=21, gamma=1.0)
 end
 GC.gc() # garbage cleanup
 N_expert = 100000
-N_doubleQ = 100000
+N_doubleQ = 10000
 # N = 50_000
 println("Starting double Q")
 double_Q_episodes = double_Q!(env, n_episodes=N_doubleQ);
@@ -62,9 +63,11 @@ expert_policy_standard_error = std(reward_)/sqrt(N_expert)
 println("Done with expert")
 
 println("Saving CSVs")
-save_policy_to_csv(env, double_Q_episodes[end].Q, "/Users/Stephen/Desktop/DQ.csv")
-save_policy_to_csv(env, vanilla_Q_episodes[end].Q, "/Users/Stephen/Desktop/VanillaQ.csv")
-save_policy_to_csv(env, sarsa_episodes[end].Q, "/Users/Stephen/Desktop/SARSA.csv") 
+save_policy_to_csv(env, double_Q_episodes[end].Q, "./DQ.csv")
+save_policy_to_csv(env, vanilla_Q_episodes[end].Q, "./VanillaQ.csv")
+save_policy_to_csv(env, sarsa_episodes[end].Q, "./SARSA.csv") 
+save_policy_to_csv(env, sarsa_lambda_Q_episodes[end].Q, "./sarsalambda.csv")
+
 
 episodes = Dict("Double-Q"=>double_Q_episodes, "SARSA-lambda"=>sarsa_episodes, "Q-learning"=>vanilla_Q_episodes, "SARSA"=>sarsa_episodes)
 finalQ = episodes["Double-Q"][end].Q
@@ -122,7 +125,7 @@ println("Expert 95% confidence = " * string(1.96*expert_policy_standard_error))
 println("Expert Win Rate = "* string(count(i->(i==1.0),reward_)/length(reward_)))
 println("")
 N_heuristic = 10000
-N_MCTS = 10000
+N_MCTS = 1000
 s0 = (0,0,false)
 # heuristic policy eval
 R_heuristic = Vector{Float64}()
